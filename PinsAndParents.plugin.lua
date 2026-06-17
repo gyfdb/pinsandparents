@@ -1,14 +1,13 @@
 --[[
-	Pins & Parents Plugin
+	Organization Plugin
 	
 	Lets you pin folders to a list, then reparent your current
 	selection into whichever folder you've highlighted.
-
-  Made by one7and7
 --]]
 
 const PLUGIN_NAME   = "Pin n Parents"
-const PLUGIN_VERSION = "v1.2.3"
+const PLUGIN_VERSION_NUMBER = 131
+const PLUGIN_VERSION_STRING = "v1.3.1"
 const PLUGIN_ICON = 114658320494964
 const PLUGIN_KEYBIND_ICON = 78200661333783
 const INTERNAL_NAME = "PaP.one7and7.roblox"
@@ -27,24 +26,35 @@ const keybindButton: PluginToolbarButton = toolbar:CreateButton(
 	"Reparent"
 )
 
--- ââ Consts ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Consts ────────────────────────────────────────────────────────────────────
 
 const NL = "\n"
 const F_M = `<font weight="medium">`
+const F_B = `<font weight="BOLD">`
+const B_S = `<b>`
+const B_E = `</b>`
 const F_E = "</font>"
+
 const WIDGET_MAIN_CONTENT_HEIGHT = 201
 const WIDGET_HEIGHT = 400
 const RAID = "rbxassetid://";
 
--- ââ Services ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+const REPARENTING_IDENTIFIER = "Repareting$"
+
+const VERSION_MODAL_PADDING = UDim.new(0, 8)
+const CHANGELOG_URL = "https://github.com/gyfdb/pinsandparents/raw/refs/heads/main/changelog.json"
+const FAILED_TO_FETCH_STATUS = "Failed to fetch changelog. Check your internet connection."
+
+-- ── Services ──────────────────────────────────────────────────────────────────
 
 const Players = game:GetService("Players")
 const Selection = game:GetService("Selection")
---const HttpService = game:GetService("HttpService")
+const HttpService = game:GetService("HttpService")
+const TextService = game:GetService("TextService")
 const TweenService = game:GetService("TweenService")
 const ChangeHistoryService = game:GetService("ChangeHistoryService")
 
--- ââ Widget ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Widget ────────────────────────────────────────────────────────────────────
 
 const widgetInfo = DockWidgetPluginGuiInfo.new(
 	Enum.InitialDockState.Left,
@@ -59,8 +69,9 @@ const widgetInfo = DockWidgetPluginGuiInfo.new(
 const widget: ScreenGui = plugin:CreateDockWidgetPluginGuiAsync("Organization", widgetInfo)
 widget.Title = PLUGIN_NAME
 widget.Name  = INTERNAL_NAME
+widget.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- ââ Colours (Studio dark theme palette) âââââââââââââââââââââââââââââââââââââââ
+-- ── Colours (Studio dark theme palette) ───────────────────────────────────────
 
 const C = {
 	BG             = Color3.fromRGB(25,  26,  31),
@@ -88,7 +99,7 @@ const C = {
 	SCROLLBAR      = Color3.fromRGB(80,  83,  98),
 }
 
--- ââ Helpers âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Helpers ───────────────────────────────────────────────────────────────────
 
 function new(cls: string, props: {any}): Instance
 	local i = Instance.new(cls)
@@ -138,14 +149,15 @@ function hoverEffect(button: TextButton, normal: Color3, hover: Color3, down: Co
 	end
 end
 
--- ââ State âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── State ─────────────────────────────────────────────────────────────────────
 
 local pinnedFolders: {Folder} = {}   -- array of Folder instances
 local connections: {RBXScriptConnection} = {}   -- array of Folder instances' removal connection
 local selectedIndex = nil  -- currently highlighted row index
 local lastAbsoluteWindowSize = widget.AbsoluteSize
+local alreadyCheckedVersion = false
 
--- ââ Functionality âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Functionality ─────────────────────────────────────────────────────────────
 
 function reparent()
 	if not selectedIndex then
@@ -178,14 +190,19 @@ function reparent()
 		end
 	end
 
-	ChangeHistoryService:SetWaypoint("Reparent to " .. targetFolder.Name)
+	local recording = ChangeHistoryService:TryBeginRecording(REPARENTING_IDENTIFIER)
+
+	if not recording then
+		setStatus("Cannot reparent, a change is already in progress.", C.BTN_DANGER)
+		return
+	end
 
 	for i, inst in ipairs(sel) do
 		if i % 5 == 4 then task.wait() end
 		inst.Parent = targetFolder
 	end
 
-	ChangeHistoryService:SetWaypoint("Reparented to " .. targetFolder.Name)
+	ChangeHistoryService:FinishRecording(recording, Enum.FinishRecordingOperation.Commit)
 
 	setStatus(
 		(`Moved {F_M}%d item%s{F_E} to {F_M}%s{F_E}`):format(
@@ -197,20 +214,32 @@ function reparent()
 	)
 end
 
--- ââ Toggle Button âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Widget Functionality ──────────────────────────────────────────────────────
+
+widget:BindToClose(function()
+	widget.Enabled = false
+	toggleButton:SetActive(false)
+end)
+
+-- ── Toggle Button ─────────────────────────────────────────────────────────────
 
 toggleButton.ClickableWhenViewportHidden = true
 toggleButton.Click:Connect(function()
 	widget.Enabled = not widget.Enabled
 	toggleButton:SetActive(widget.Enabled)
+
+	if widget.Enabled and not alreadyCheckedVersion then
+		alreadyCheckedVersion = true
+		checkVersion()
+	end
 end)
 
--- ââ Reparent Button âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Reparent Button ───────────────────────────────────────────────────────────
 
 keybindButton.ClickableWhenViewportHidden = true
 keybindButton.Click:Connect(reparent)
 
--- ââ Root frame ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Root frame ────────────────────────────────────────────────────────────────
 
 const root = new("Frame", {
 	Parent           = widget,
@@ -234,7 +263,7 @@ new("UIListLayout", {
 	Padding       = UDim.new(0, 6),
 })
 
--- ââ UI helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── UI helpers ────────────────────────────────────────────────────────────────
 
 function sectionLabel(parent: GuiObject, text: string, order: number): TextLabel
 	return newWithOrder("TextLabel", {
@@ -258,12 +287,12 @@ function divider(n: number): Frame
 	}, n)
 end
 
--- ââ Folder list panel âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Folder list panel ─────────────────────────────────────────────────────────
 
 sectionLabel(root, "PINNED FOLDERS", 1)
 
 const listPanel: ScrollingFrame = newWithOrder("ScrollingFrame", {
-	Parent               = root,
+	Active               = true,
 	Size                 = UDim2.new(1, 0, 0, WIDGET_HEIGHT - WIDGET_MAIN_CONTENT_HEIGHT),
 	BackgroundColor3     = C.PANEL,
 	BorderSizePixel      = 1,
@@ -274,6 +303,7 @@ const listPanel: ScrollingFrame = newWithOrder("ScrollingFrame", {
 	TopImage             = RAID.."775999050",
 	MidImage             = RAID.."1255822465",
 	BottomImage          = RAID.."775999473",
+	Parent               = root,
 }, 2)
 
 const listLayout: UIListLayout = new("UIListLayout", {
@@ -306,7 +336,7 @@ const emptyLabel: TextLabel = new("TextLabel", {
 
 divider(3)
 
--- ââ Row rendering âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Row rendering ─────────────────────────────────────────────────────────────
 
 local rowFrames: {TextButton} = {}
 
@@ -315,7 +345,7 @@ function upateListSize()
 	listPanel.Size = UDim2.new(1, 0, 0, math.max(50, widget.AbsoluteSize.Y - WIDGET_MAIN_CONTENT_HEIGHT))
 	listPanel.CanvasSize = UDim2.fromOffset(0, listLayout.AbsoluteContentSize.Y)
 	listPanel.ScrollingEnabled = listLayout.AbsoluteContentSize.Y > listPanel.AbsoluteSize.Y
-	listPadding.PaddingRight = UDim.new(0, listPanel.ScrollingEnabled and 10 or 0)
+	listPadding.PaddingRight = UDim.new(0, listPanel.ScrollingEnabled and listPanel.ScrollBarThickness or 0)
 end
 
 function rebuildList()
@@ -324,6 +354,7 @@ function rebuildList()
 	rowFrames = {}
 
 	emptyLabel.Visible = (#pinnedFolders == 0)
+	listLayout.VerticalAlignment = Enum.VerticalAlignment[(#pinnedFolders == 0) and "Center" or "Top"]
 
 	for i, folder in ipairs(pinnedFolders) do
 		local isSel = (selectedIndex == i)
@@ -355,7 +386,7 @@ function rebuildList()
 			Parent                 = row,
 			Size                   = UDim2.new(0, 18, 1, 0),
 			BackgroundTransparency = 1,
-			Text                   = "ð",
+			Text                   = "📁",
 			FontFace               = Font.fromName("Montserrat"),
 			TextSize               = 13,
 			TextXAlignment         = Enum.TextXAlignment.Left,
@@ -384,13 +415,13 @@ function rebuildList()
 			Size                   = UDim2.new(0, 18, 0, 20),
 			BackgroundColor3       = Color3.fromRGB(0,0,0),
 			BackgroundTransparency = 1,
-			Text                   = "Ã",
+			Text                   = "×",
 			FontFace               = Font.fromName("Montserrat", Enum.FontWeight.Bold),
 			TextSize               = 16,
 			TextColor3             = C.TEXT_DIM,
 			ZIndex                 = 2,
 		})
-		
+
 		removeBtn.MouseEnter:Connect(function()
 			removeBtn.TextColor3 = Color3.fromRGB(220, 80, 80)
 		end)
@@ -433,7 +464,7 @@ widget:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 	lastAbsoluteWindowSize = widget.AbsoluteSize
 end)
 
--- ââ Button bar ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Button bar ────────────────────────────────────────────────────────────────
 
 local function makeBtn(parent: GuiObject, text: string, order: number, color: Color3, hcolor: Color3, ccolor: Color3?, tcolor: Color3?): TextButton
 	local btn: TextButton = newWithOrder("TextButton", {
@@ -466,16 +497,17 @@ local reparentBtn: TextButton = makeBtn(root, "Reparent Selection", 5, C.BTN_ACT
 -- Reparent selection
 local clearBtn: TextButton = makeBtn(root, "Clear Pinned", 6, C.BTN_NEUTRAL, C.BTN_DANGER, C.BTN_DANGER_C, C.BTN_DANGER_C)
 new("UIStroke", {
-	Color = C.BTN_DANGER,
-	Thickness = 2,
-	LineJoinMode = Enum.LineJoinMode.Round,
+	Color                = C.BTN_DANGER,
+	Thickness            = 2,
+	LineJoinMode         = Enum.LineJoinMode.Round,
 	BorderStrokePosition = Enum.BorderStrokePosition.Inner,
-	ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-}).Parent = clearBtn
+	ApplyStrokeMode      = Enum.ApplyStrokeMode.Border,
+	Parent               = clearBtn
+})
 
 divider(7)
 
--- ââ Status bar ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Status bar ────────────────────────────────────────────────────────────────
 
 local statusLabel: TextLabel = newWithOrder("TextLabel", {
 	Parent                 = root,
@@ -499,7 +531,7 @@ end
 
 divider(9)
 
--- ââ Pin logic âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Pin logic ─────────────────────────────────────────────────────────────────
 
 pinBtn.MouseButton1Click:Connect(function()
 	local sel = Selection:Get()
@@ -541,11 +573,11 @@ pinBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- ââ Reparent logic ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Reparent logic ────────────────────────────────────────────────────────────
 
 reparentBtn.MouseButton1Click:Connect(reparent)
 
--- ââ Clear logic âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Clear logic ───────────────────────────────────────────────────────────────
 
 clearBtn.MouseButton1Click:Connect(function()
 	table.clear(pinnedFolders)
@@ -556,7 +588,224 @@ clearBtn.MouseButton1Click:Connect(function()
 	)
 end)
 
--- ââ Creator âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Version checker ───────────────────────────────────────────────────────────
+
+local backdrop: Frame = new("TextButton", {
+	Active                 = true,
+	AutoButtonColor        = false,
+	BackgroundColor3       = Color3.new(0, 0, 0),
+	BackgroundTransparency = 0.4,
+	Size                   = UDim2.fromScale(1, 1),
+	ZIndex                 = 2,
+	Text                   = "",
+	Visible                = false,
+	Parent                 = widget,
+})
+
+local versionModal: Frame = new("Frame", {
+	AnchorPoint            = Vector2.one * 0.5,
+	AutomaticSize          = Enum.AutomaticSize.XY,
+	BackgroundColor3       = C.PANEL,
+	Position               = UDim2.fromScale(0.5, 0.5),
+	Size                   = UDim2.fromScale(0.9, 0.9),
+	ZIndex                 = 3,
+	Visible                = false,
+	Parent                 = widget,
+})
+
+new("UIPadding", {
+	PaddingBottom = VERSION_MODAL_PADDING,
+	PaddingLeft   = VERSION_MODAL_PADDING,
+	PaddingRight  = VERSION_MODAL_PADDING,
+	PaddingTop    = VERSION_MODAL_PADDING,
+	Parent        = versionModal,
+})
+
+new("UICorner", {
+	CornerRadius = UDim.new(0, 6),
+	Parent       = versionModal,
+})
+
+new("UIListLayout", {
+	Padding             = UDim.new(0, 6),
+	SortOrder           = Enum.SortOrder.LayoutOrder,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	VerticalFlex        = Enum.UIFlexAlignment.Fill,
+	Parent              = versionModal,
+})
+
+new("UISizeConstraint", {
+	MaxSize = Vector2.new(350, 300),
+	MinSize = Vector2.new(100, 100),
+	Parent  = versionModal,
+})
+
+new("UIStroke", {
+	Color  = C.BORDER,
+	Parent = versionModal,
+})
+
+local modalTitle: TextLabel = newWithOrder("TextLabel", {
+	BackgroundTransparency = 1,
+	Size                   = UDim2.new(1, 0, 0, 30),
+	FontFace               = Font.fromName("Montserrat", Enum.FontWeight.Bold),
+	Text                   = "UPDATE AVAILABLE",
+	TextColor3             = C.TEXT_SEL,
+	TextSize               = 14,
+	Parent                 = versionModal,
+}, 1)
+
+local modalScroll: ScrollingFrame = newWithOrder("ScrollingFrame", {
+	Active               = true,
+	BackgroundColor3     = C.PANEL,
+	BorderSizePixel      = 1,
+	BorderColor3         = C.BORDER,
+	Size                 = UDim2.fromScale(1, 1),
+	ClipsDescendants     = true,
+	CanvasSize           = UDim2.new(),
+	ScrollBarImageColor3 = C.SCROLLBAR,
+	TopImage             = RAID.."775999050",
+	MidImage             = RAID.."1255822465",
+	BottomImage          = RAID.."775999473",
+	Parent               = versionModal,
+}, 2)
+
+const modalScrollLayout: UIListLayout = new("UIListLayout", {
+	FillDirection       = Enum.FillDirection.Vertical,
+	SortOrder           = Enum.SortOrder.LayoutOrder,
+	Padding             = UDim.new(0, 1),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	VerticalAlignment   = Enum.VerticalAlignment.Top,
+	Parent              = modalScroll,
+})
+
+local modalScrollPadding: UIPadding = new("UIPadding", {
+	PaddingBottom = VERSION_MODAL_PADDING,
+	PaddingLeft   = VERSION_MODAL_PADDING,
+	PaddingRight  = VERSION_MODAL_PADDING,
+	PaddingTop    = VERSION_MODAL_PADDING,
+	Parent = modalScroll,
+})
+
+local modalButton: TextButton = makeBtn(versionModal, "Continue", 3, C.BTN_NEUTRAL, C.BTN_DANGER, C.BTN_DANGER_C, C.BTN_DANGER_C)
+modalButton.Size = UDim2.new(0.5, 0, 0, 28)
+new("UISizeConstraint", {
+	MaxSize = Vector2.new(150, math.huge),
+	Parent  = modalButton,
+})
+new("UIStroke", {
+	Color                = C.BTN_DANGER,
+	Thickness            = 2,
+	LineJoinMode         = Enum.LineJoinMode.Round,
+	BorderStrokePosition = Enum.BorderStrokePosition.Inner,
+	ApplyStrokeMode      = Enum.ApplyStrokeMode.Border,
+	Parent               = clearBtn,
+})
+
+local exampleChangelogDescription: TextLabel = new("TextLabel", {
+	BackgroundTransparency = 1,
+	Size                   = UDim2.fromScale(1, 1),
+	FontFace               = Font.fromName("Montserrat"),
+	RichText               = true,
+	Text                   = "N/A",
+	TextColor3             = C.TEXT,
+	TextWrapped            = true,
+	TextXAlignment         = Enum.TextXAlignment.Left,
+	TextYAlignment         = Enum.TextYAlignment.Top,
+	TextSize               = 12,
+})
+
+function hideVersionModal()
+	versionModal.Visible = false
+	backdrop.Visible = false
+end
+
+function showVersionModal()
+	versionModal.Visible = true
+	backdrop.Visible = true
+end
+
+function updateChangelogList()
+	modalScroll.CanvasSize = UDim2.fromOffset(0, modalScrollLayout.AbsoluteContentSize.Y)
+	modalScroll.ScrollingEnabled = modalScrollLayout.AbsoluteContentSize.Y > modalScroll.AbsoluteSize.Y
+	modalScrollPadding.PaddingRight = UDim.new(0, modalScroll.ScrollingEnabled and (VERSION_MODAL_PADDING.Offset + modalScroll.ScrollBarThickness) or 0)
+end
+
+function getVersions()
+	local res = HttpService:GetAsync(CHANGELOG_URL, true)
+	return HttpService:JSONDecode(res)
+end
+
+function createVersionLog(versionData)
+	local versionDescription: TextLabel = exampleChangelogDescription:Clone()
+	local newLabel = (versionData.versionNumber > PLUGIN_VERSION_NUMBER) and "(NEW) - " or ""
+	local versionText = `{B_S}{newLabel}Version {versionData.versionString}{B_E}\n{versionData.description}`
+	versionDescription.Text = versionText 
+	versionDescription.Parent = modalScroll
+
+	local content = versionDescription.ContentText
+	local params = Instance.new("GetTextBoundsParams")
+	params.Size = 12
+	params.Text = versionText
+	params.Width = versionDescription.AbsoluteSize.X - (VERSION_MODAL_PADDING.Offset + modalScroll.ScrollBarThickness)
+	params.Font = Font.fromName("Montserrat")
+	params.RichText = true
+
+	local success, bounds: Vector2 = pcall(TextService.GetTextBoundsAsync, TextService, params)
+
+	if success then
+		versionDescription.Size = UDim2.new(1, 0, 0, bounds.Y + 20)
+	else
+		local newLines = #versionText:split("\n")
+		versionDescription.Size = UDim2.new(1, 0, 0, (newLines * 20) + 40)
+	end
+
+	workspace.Destroy(params)
+end
+
+function loadVersions(data)
+	local versions = {}
+
+	for _, versionData in data do
+		table.insert(versions, versionData)
+	end
+
+	table.sort(versions, function(a, b)
+		return a.versionNumber > b.versionNumber
+	end)
+
+	if versions[1].versionNumber ~= PLUGIN_VERSION_NUMBER then
+		showVersionModal()
+
+		for _, versionData in versions do
+			createVersionLog(versionData)
+		end
+
+		task.delay(0.1, updateChangelogList)
+	end
+end
+
+function checkVersion()
+	local success, data = pcall(getVersions)
+
+	if not success then
+		setStatus(FAILED_TO_FETCH_STATUS, C.BTN_DANGER_C)
+
+		task.wait(15)
+
+		if statusLabel.Text == FAILED_TO_FETCH_STATUS then
+			setStatus("Select a Folder(s) in the workspace to begin pinning.", C.TEXT_DIM)
+		end
+	else
+		loadVersions(data)
+	end
+end
+
+modalButton.MouseButton1Click:Connect(function()
+	hideVersionModal()
+end)
+
+-- ── Creator ───────────────────────────────────────────────────────────────────
 
 do
 	local success, creator_name = pcall(Players.GetNameFromUserIdAsync, Players, 5836169454)
@@ -583,13 +832,13 @@ do
 
 	local function changeText(now: number)
 		if cl_t ~= now then return end
-		creator_label.Text = `{PLUGIN_VERSION} â¢ All Rights Reserved`
+		creator_label.Text = `{PLUGIN_VERSION_STRING} • All Rights Reserved`
 	end
 
 	creator_label.MouseEnter:Connect(function()
 		local now = tick()
 		cl_t = now
-		
+
 		task.delay(3, changeText, now)
 	end)
 	creator_label.MouseLeave:Connect(function()
@@ -598,215 +847,6 @@ do
 	end)
 end
 
--- ââ Cleanup stale folders when workspace changes ââââââââââââââââââââââââââââââ
-
--- NOTE: This code actually sucks. I don't know why I did this. The code now hooks to pinned folders.
---[=[workspace.DescendantRemoving:Connect(function(inst)
-	for i = #pinnedFolders, 1, -1 do
-		if pinnedFolders[i] == inst then
-			if selectedIndex == i then selectedIndex = nil
-			elseif selectedIndex and selectedIndex > i then selectedIndex -= 1 end
-			table.remove(pinnedFolders, i)
-		end
-	end
-	rebuildList()
-end)]=]
-
--- ââ Saving and Loading ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
--- NOTE: This probably doesn't work. I'm really not bothered to figure it out again.
---[=[
-
-
-const CBL = function(bg: string)
-	return `<mark color="{bg}"><font color="#{C.TEXT_SEL:ToHex()}" weight="medium">`
-end
-const CBLE = "</font></mark>"
-
-local warningIndex = 0
-local currentWarningScreen = nil
-local alreadyLoaded = false
-
-local id = game.PlaceId
-
-if id == 0 then id = game.Name end
-if game.CoreGui:FindFirstChild("Organization_WarningScreen") then
-	game.CoreGui.Organization_WarningScreen:Destroy()
-end
-
-function getFromFullName(list: {string}, currentInstance: Instance)
-	local found = currentInstance:FindFirstChild(list[1])
-
-	-- if not found, then return nil	
-	if not found then
-		return nil
-	end
-
-	table.remove(list, 1)
-
-	-- if found, and list empty, return found
-	if #list == 0 then
-		return found
-	end
-
-	return getFromFullName(list, found)
-end
-
-function generateWarningScreen(): (ScreenGui, Frame)
-	if currentWarningScreen then
-		return currentWarningScreen, currentWarningScreen:FindFirstChild("WarningContainer")
-	end
-
-	local notifyScreen: ScreenGui = new("ScreenGui", {
-		Name           = "Organization_WarningScreen",
-		ResetOnSpawn   = false,
-		IgnoreGuiInset = true,
-		Parent         = game.CoreGui,
-	})
-
-	local container: Frame = new("Frame", {
-		Name                   = "WarningContainer",
-		AnchorPoint            = Vector2.one,
-		BackgroundTransparency = 1,
-		Position               = UDim2.new(1, -10, 1, -10),
-		Size                   = UDim2.fromScale(0.1, 0.1),
-		Parent                 = notifyScreen,
-	})
-
-	new("UIListLayout", {
-		Padding             = UDim.new(0, 6),
-		SortOrder           = Enum.SortOrder.LayoutOrder,
-		HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		VerticalAlignment   = Enum.VerticalAlignment.Bottom,
-		Parent              = container,
-	})
-
-	local function checkList()
-		if #container:GetChildren() == 1 then
-			currentWarningScreen = nil
-			notifyScreen:Destroy()
-		end
-	end
-
-	container.ChildRemoved:Connect(function()
-		task.delay(1, checkList)
-	end)
-
-	currentWarningScreen = notifyScreen
-
-	return notifyScreen, container
-end
-
-function generateWarningFrame(text: string, size: number): TextButton
-	warningIndex += 1
-
-	local warningButton: TextButton = newWithOrder("TextButton", {
-		Active           = true,
-		AutoButtonColor  = false,
-		BackgroundColor3 = C.BG,
-		BorderSizePixel  = 0,
-		Size             = UDim2.fromScale(3, size or 1),
-		Selectable       = true,
-		FontFace         = Font.fromName("Montserrat"),
-		LineHeight       = 1.4,
-		RichText         = true,
-		Text             = text,
-		TextColor3       = C.TEXT,
-		TextSize         = 14,
-		TextWrapped      = true,
-		TextXAlignment   = Enum.TextXAlignment.Left,
-	}, warningIndex)
-
-	new("UICorner", {
-		CornerRadius = UDim.new(0, 6),
-		Parent       = warningButton,
-	})
-
-	new("UIPadding", {
-		PaddingBottom = UDim.new(0, 8),
-		PaddingLeft   = UDim.new(0, 8),
-		PaddingRight  = UDim.new(0, 8),
-		PaddingTop    = UDim.new(0, 8),
-		Parent        = warningButton,
-	})
-
-	hoverEffect(warningButton, C.BG, C.PANEL)
-
-	warningButton.MouseButton1Down:Connect(function()
-		warningButton.BackgroundColor3 = C.ITEM
-	end)
-
-	warningButton.MouseButton1Up:Connect(function()
-		warningButton:Destroy()
-	end)
-
-	task.delay(15, workspace.Destroy, warningButton)
-
-	return warningButton
-end
-
-function warnUser(text: string, size: number)
-	local _, container = generateWarningScreen()
-	generateWarningFrame(text, size).Parent = container
-end
-
-function loadFromSettings()
-	local selectionDejson = plugin:GetSetting(`{id}_saved_selection`)
-
-	if not selectionDejson then return end
-
-	local lastSelection = HttpService:JSONDecode(selectionDejson)
-	local newSelection = {}
-
-	for _, fullName: string in lastSelection do
-		local found = getFromFullName(fullName)
-
-		if not found then
-			local cbls = CBL(`#{C.PANEL:ToHex()}`)
-			warnUser(`Could not find the folder from previous save:{NL}{cbls} {fullName} {CBLE}`)
-		else
-			table.insert(pinnedFolders, found)
-		end
-	end
-
-	rebuildList()
-end
-
-function saveToSettings()
-	local currentSelection = {}
-
-	for _, folder: Folder in pinnedFolders do
-		local fullName = folder:GetFullName()
-		if table.find(currentSelection, fullName) then
-			local cbls = CBL(`#{C.PANEL:ToHex()}`)
-			warnUser(`Folder {cbls} {fullName} {CBLE} already exists.`)
-		else
-			table.insert(currentSelection, fullName)
-		end
-	end
-
-	local selectionDejson = HttpService:JSONEncode(currentSelection)
-
-	plugin:SetSetting(`{id}_saved_selection`, selectionDejson)
-end
-
-plugin.Unloading:Connect(saveToSettings)
-
-widget:BindToClose(function()
-	saveToSettings()
-	widget.Enabled = false
-end)
-
-widget:GetPropertyChangedSignal("Enabled"):Connect(function()
-	if widget.Enabled and not alreadyLoaded then
-		loadFromSettings()
-		alreadyLoaded = true
-	end
-end)
-
-
-]=]
-
--- ââ Initial render ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- ── Initial render ────────────────────────────────────────────────────────────
 
 rebuildList()
