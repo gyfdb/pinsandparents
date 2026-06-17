@@ -1,6 +1,5 @@
-[
-  {
-    "version": "1.3.1",
+{
+  "1.3.1": {
     "description": "<b>Version 1.3.1</b>\n- Feat: Added a version notification modal. Provides descriptions on new updates.\n- Fix: Updated how reparenting is recorded through ChangeHistoryService, using the newer methods."
   }
-]
+}
