@@ -2,7 +2,7 @@
   "1.3.1": {
     "versionNumber": 131,
     "versionString": "1.3.1",
-    "description": "- Feat: Added a version notification modal. Provides descriptions on new updates.\n- Fix: Updated how reparenting is recorded through ChangeHistoryService, using the newer methods."
+    "description": "- Feat: Added a version notification modal. Provides descriptions on new updates.\n- Fix: Empty list label now sticks to the center.\n- Fix: Updated how reparenting is recorded through ChangeHistoryService, using the newer methods."
   },
   "1.2.3": {
     "versionNumber": 123,
